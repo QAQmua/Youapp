@@ -1,0 +1,39 @@
+name: Build IPA
+
+on:
+  workflow_dispatch: # 支持在 GitHub 网页上手动点击按钮立即打包
+
+jobs:
+  build:
+    runs-on: macos-14 # 运行在 GitHub 提供的云端苹果 Mac 虚拟机上
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Xcode 版本
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+
+      - name: 编译 SwiftPM App
+        run: |
+          xcodebuild build \
+            -scheme AppModule \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            -derivedDataPath ./build \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: 封装为 IPA 文件
+        run: |
+          mkdir -p Payload
+          # 寻找编译出的 .app 产物并打包
+          APP_PATH=$(find ./build/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
+          cp -r "$APP_PATH" Payload/
+          zip -r You.ipa Payload
+          echo "打包完成！"
+
+      - name: 上传 IPA 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: You-App-IPA
+          path: You.ipa
