@@ -16,28 +16,33 @@ jobs:
 
       - name: 解压并编译打包
         run: |
-          # 1. 安全解压所有 zip（彻底兼容文件名里的空格和中文特殊符号）
+          # 1. 解压所有 zip 文件
           find . -maxdepth 2 -iname "*.zip" -exec unzip -o -q "{}" \;
 
-          # 2. 定位 Package.swift 所在文件夹
-          PKG_FILE=$(find . -name "Package.swift" -not -path "*/.*" | head -n 1)
-          if [ -z "$PKG_FILE" ]; then
-            echo "错误：解压后未找到 Package.swift"
-            exit 1
+          # 2. 找到真正的工程核心目录（优先使用解压出的完整文件夹）
+          SUB_PKG=$(find . -mindepth 2 -name "Package.swift" -not -path "*/.*" -exec dirname {} \; | head -n 1)
+          if [ -n "$SUB_PKG" ]; then
+            echo "切换到完整项目目录: $SUB_PKG"
+            cd "$SUB_PKG"
+          else
+            ROOT_PKG=$(find . -name "Package.swift" -not -path "*/.*" -exec dirname {} \; | head -n 1)
+            cd "$ROOT_PKG"
           fi
-          
-          PKG_DIR=$(dirname "$PKG_FILE")
-          echo "成功进入项目目录: $PKG_DIR"
-          cd "$PKG_DIR"
 
-          # 3. 自动匹配 Scheme (You)
+          # 3. 自动消灭重复的 Assets.xcassets 资源冲突（只保留第一个，删除多余的）
+          find . -name "Assets.xcassets" | tail -n +2 | while read -r dup; do
+            echo "正在自动清除重复资源: $dup"
+            rm -rf "$dup"
+          done
+
+          # 4. 获取构建 Scheme
           SCHEME=$(xcodebuild -list 2>/dev/null | awk '/Schemes:/{flag=1;next} flag && NF{print $1; exit}')
           if [ -z "$SCHEME" ]; then
             SCHEME="You"
           fi
-          echo "编译使用的 Scheme: $SCHEME"
+          echo "编译 Scheme: $SCHEME"
 
-          # 4. 免证书直接构建
+          # 5. 纯净编译构建
           xcodebuild build \
             -scheme "$SCHEME" \
             -destination "generic/platform=iOS" \
@@ -47,17 +52,17 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
 
-          # 5. 生成 IPA
+          # 6. 提取 .app 并打包为 IPA
           cd "$GITHUB_WORKSPACE"
           mkdir -p Payload
           APP_PATH=$(find . -name "*.app" -path "*/Release-iphoneos/*" | head -n 1)
           if [ -z "$APP_PATH" ]; then
             APP_PATH=$(find . -name "*.app" | head -n 1)
           fi
-          echo "打包目标: $APP_PATH"
+          echo "找到 APP 产物: $APP_PATH"
           cp -r "$APP_PATH" Payload/
           zip -r You.ipa Payload
-          echo "恭喜！IPA 封装成功！"
+          echo "🎉 恭喜！IPA 文件打包全部完成！"
 
       - name: 上传 IPA 供下载
         uses: actions/upload-artifact@v4
