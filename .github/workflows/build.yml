@@ -1,11 +1,11 @@
 name: Build IPA
 
 on:
-  workflow_dispatch: # 支持在 GitHub 网页上手动点击按钮立即打包
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-14 # 运行在 GitHub 提供的云端苹果 Mac 虚拟机上
+    runs-on: macos-14
 
     steps:
       - name: 检出代码
@@ -14,20 +14,49 @@ jobs:
       - name: 设置 Xcode 版本
         run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
 
-      - name: 编译 SwiftPM App
+      - name: 自动定位并编译 App
         run: |
+          # 1. 自动寻找 Package.swift 所在的实际路径并进入
+          PKG_PATH=$(find . -name "Package.swift" -not -path "*/.*" -exec dirname {} \; | head -n 1)
+          if [ -z "$PKG_PATH" ]; then
+            echo "错误：仓库中未找到 Package.swift 文件！"
+            exit 1
+          fi
+          echo "找到项目目录: $PKG_PATH"
+          cd "$PKG_PATH"
+
+          # 2. 自动检测项目的正确 Scheme 名称（通常为 You）
+          SCHEME=$(xcodebuild -list 2>/dev/null | awk '/Schemes:/{flag=1;next} flag && NF{print $1; exit}')
+          if [ -z "$SCHEME" ]; then
+            SCHEME="You"
+          fi
+          echo "使用构建 Scheme: $SCHEME"
+
+          # 3. 执行纯净构建（跳过本地签名）
           xcodebuild build \
-            -scheme AppModule \
+            -scheme "$SCHEME" \
             -destination "generic/platform=iOS" \
             -configuration Release \
             -derivedDataPath ./build \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
 
       - name: 封装为 IPA 文件
         run: |
           mkdir -p Payload
-          # 寻找编译出的 .app 产物并打包
-          APP_PATH=$(find ./build/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
+          # 全局寻找编译生成的 .app 产物
+          APP_PATH=$(find . -name "*.app" -path "*/Release-iphoneos/*" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find . -name "*.app" | head -n 1)
+          fi
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "错误：未找到生成的 .app 文件！"
+            exit 1
+          fi
+          
+          echo "找到 App: $APP_PATH"
           cp -r "$APP_PATH" Payload/
           zip -r You.ipa Payload
           echo "打包完成！"
